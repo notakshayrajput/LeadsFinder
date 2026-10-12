@@ -1,0 +1,122 @@
+So I guess Ill make a crawler that will find hotel in from GoIbibo for now. And make a directory of hotel names and images(3-5), location:cordinates, address, room types rating or whatever info I could find useful for sales lead.
+
+Also I will also get this info from open street map
+
+For this I will take user input: Location and radius, Map pin for now. 
+
+
+Once I have this data I will start an ollama model basic one. 
+1. First Ill ask it to see if we have match in DB for the hotel(we can use coordinates to filter nearby hotels to find match) (if match percentage>70% then I will skip that entry)
+2. I will check what info is missing and I will make it search phone number, email, hotel website, address (or whatever) info that is missing using web search like search("Hotel Krishna Deluxe By RCG Hotels Phone Number") 
+3. Once I have the final available info I will add it to DB.
+	Db will have the following info atleast 
+	Name, Address, District, Zone, City, State, Country, Pincode , Phone, Email, Images, Rating, LeadConfidence(how correct it is), Cordinates, Sources(from  openSiteMap, Google Places API, SearXNG, ollama Web Search). 
+4. I will have a user dashboard that will show these sales leads allow them to call email, and if they find some info is incorrect they can give feedback and correct info if they have and then submit that request. An app admin can come by and check for feedback (type incorrect value,duplicate) and see if they need to update it.
+
+
+
+Now lets say we have clean data for places like hotels or food service or other business. A user can manage their sales strategies and calls and if they cracked a deal if yes then they will have that customer in their own customers list from where they can see last contacted and option to call back or mail back n stuff. Later we can integrate saving old convo of user created from the app 
+
+So App Flow will be
+1. User creates a Search Job. with info like:
+	1. Business type to search
+	2. Cordinates + Radius(allow upto say min 10km, max 50km) / City / State
+	3. Required info: Must have phone info; must have email info; must require address;
+	4. Find Leads count(100); 
+	5. If N leads are not found: Show less; OR increase radius;
+2. The job will start doing the following:
+	1. Divide the cordinate+radius into zones of smaller radius. OR divide it in smaller districts
+	2. From center to the farthest we will get Business type searches from Various sources.
+	3. Remove Duplicates, Add missing info, Clean Data add to DB as per confidence level
+	4. Return data to customer and mark these leads as seen by this customer. 
+	5. Mark zones as searched for the business type
+	6. Add the leads seen by this customer in a table so for next job run we can avoid these leads
+3. Search Strategies and sources
+	Sources:
+	1. Our DB collection
+	2. OpenSiteMap	
+	3. Google Places API
+	4. Website Crawler
+	5. Open source website crawler tools(like Airbnb crawler) or some other business website crawler added in future
+	6. 
+	
+	For finding missing details:
+	1. Ollama's Web Search (have a token pool)
+	2. Other search APIs
+	
+	Strategy:
+	1. Divide the region into subzones
+	2. Get the leads user has seen already and find leads in the region that are not seen by user. If exist send these leads and start searching more in this region and parameters to find more leads using other strategies(if all the found leads are seen by user too then mark that place to user as all found for now. try later after some time)
+	3. If the leads are not in the DB for the region
+		1. Start finding leads for each subzone and divide the leads from each subzone based on popularity so if the region has 1000 leads, and Zone 1 has 400 leads and Zone 2 has 600 leads get 40 leads from zone 1 and 60 from zone 2. 
+			1. When I said start finding leads I meant in the order: 1 in OpenSiteMap, 2. in Google API, 3 Web Crawler. look for other soruces that might be useful for this business type and find more
+			2. Mark this region as searched for Google API for say 1 month.
+		2. Add all the leads to a quarantine table and then check if we have these in Db already with a strong confidence then remove them. If more than 80% of the found records where already present mark this region zone for that business type as already fetched(for say next 3 months)
+		3. If the leads are less than the count required increase the zone radius and find more leads as per user requirements.
+	
+
+	4. When no/less load is on server start the web crawler in background for last few/common searches
+	5. When you find something again look for missing values and add the entry in db
+
+
+AI usage: 
+1. Understand and reject duplicates
+2. Search missing values (Not AI)
+3. Extract needed values 
+
+
+Tech Stack 
+
+ Dashboard 		React + TypeScript 
+ API 			ASP.NET Core on **.NET 10 LTS** 
+ Database 		PostgreSQL + PostGIS 
+ Data access 		EF Core with NetTopologySuite 
+ Search-job processing 	A separate .NET Worker Service
+ AI calls  		AWS SDK for .NET → Bedrock Converse API 
+
+
+
+This is my plan for how the app should work
+
+We will have a search job. 
+A search job will have info of what to search example
+	Place Type : Lets keep the place type currently only Hotels, AirBnbs, Bread and Breakfast... All from Google API Places Types (lodging)
+	Region : City/State | Cordinate + Radius
+	Required info: Must have phone info; must have email info; must require address;
+	Find Leads count(100); 
+	If N leads are not found: Show less; OR increase radius;
+	JobScheduleTime : When to run;
+
+
+Once a job is given to the Service worker 
+The job will be added to queue based on the Search type it recognises what kind of search strategies it needs to pick. For now we will only have 3 strategies
+1. Google Places API
+2. Open Site Map
+3. Web Crawler
+
+All types of searching strategies must provide: A Name, Some kind of address field, coordinates, Strategy type and Source Link. Optional but needed:Phone Number, Email, website. Golden detail: Owner Number, Owner Email...And more
+
+And this will fill a quarantine table
+
+And another service that will check if the row already exists in DB if yes merge better info from the two.
+
+else find the missing info from a web searched info given as context.
+
+And then whatever info that can be extracted take it and add the missing info
+
+Then add the row to the DB's Final Lead Database
+
+
+So for now we have 2(or 1) worker service one that fetches and adds to quarantine data other that adds to final data. One service for DB management. One Web API service. One react app for dashboard
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_DB: leadsfinder
+      POSTGRES_USER: leadsfinder
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - leadsfinder_data:/var/lib/postgresql/data
+
+volumes:
+  leadsfinder_data:

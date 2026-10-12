@@ -1,0 +1,37 @@
+# .NET build output and generated files
+**/bin/
+**/obj/
+**/artifacts/
+**/TestResults/
+*.coverage
+*.coveragexml
+coverage/
+
+# IDE and user-specific settings
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pfx
+*.publishsettings
+*.pubxml.user
+appsettings.*.local.json
+
+# Dashboard dependencies and build output
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Downloaded map data and temporary files
+**/data/*.osm.pbf
+**/data/*.download-*
+*.log

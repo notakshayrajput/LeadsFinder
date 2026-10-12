@@ -1,0 +1,3 @@
+[submodule "src/LeadsFinder/google-maps-scraper"]
+	path = src/LeadsFinder/google-maps-scraper
+	url = https://github.com/gosom/google-maps-scraper.git
