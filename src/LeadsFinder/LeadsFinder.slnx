@@ -4,5 +4,7 @@
   </Folder>
   <Project Path="LeadsFinder.Data/LeadsFinder.Data.csproj" />
   <Project Path="LeadsFinder.Api/LeadsFinder.Api.csproj" />
+  <Project Path="LeadsFinder.Enrichment/LeadsFinder.Enrichment.csproj" />
+  <Project Path="LeadsFinder.EnrichmentPilot/LeadsFinder.EnrichmentPilot.csproj" />
   <Project Path="LeadsFinder.Worker/LeadsFinder.Worker.csproj" />
 </Solution>

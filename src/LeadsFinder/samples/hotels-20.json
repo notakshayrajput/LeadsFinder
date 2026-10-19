@@ -1,0 +1,22 @@
+[
+  { "name": "Hotel Grand Godwin", "address": "Paharganj, New Delhi", "website": "https://godwinhotels.com/hotel-grand-godwin/" },
+  { "name": "Hotel Godwin Deluxe", "address": "Paharganj, New Delhi", "website": "https://godwinhotels.com/hotel-godwin-deluxe/" },
+  { "name": "Hotel Vin Inn", "address": "Paharganj, New Delhi", "website": "https://www.hotelvininn.com/" },
+  { "name": "Hotel Sun International", "address": "Paharganj, New Delhi", "website": "https://www.hotelsuninternational.com/" },
+  { "name": "Hotel Tourist Deluxe", "address": "Paharganj, New Delhi", "website": "https://hoteltouristdeluxe.com/" },
+  { "name": "Hotel Delhi Empire DX", "address": "Paharganj, New Delhi", "website": "https://www.hoteldelhiempiredx.in/" },
+  { "name": "Le ROI Delhi Hotel", "address": "Paharganj, New Delhi", "website": "https://www.leroihotels.com/le-roi-delhi-hotel-paharganj/" },
+  { "name": "Hotel Southern", "address": "Karol Bagh, New Delhi", "website": "https://www.hotelsouthern.com/karol-bagh-new-delhi/" },
+  { "name": "Hotel Southern Regency", "address": "Karol Bagh, New Delhi", "website": "https://www.southernregency.com/" },
+  { "name": "The Pearl Royal Residency", "address": "Karol Bagh, New Delhi", "website": "https://www.hotelthepearl.in/" },
+  { "name": "Hotel BB Palace", "address": "Karol Bagh, New Delhi", "website": "https://www.hotelbbpalace.com/" },
+  { "name": "Hotel Indraprastha", "address": "Karol Bagh, New Delhi", "website": "https://www.hotelindraprasthadelhi.com/" },
+  { "name": "Hotel Kings Inn", "address": "Karol Bagh, New Delhi", "website": "https://hotelkingsinn.com/" },
+  { "name": "Swati Hotels", "address": "Karol Bagh, New Delhi", "website": "https://swatihotels.com/" },
+  { "name": "Hotel Sun View International", "address": "Karol Bagh, New Delhi", "website": "https://sunviewinternational.com/" },
+  { "name": "The Connaught", "address": "Connaught Place, New Delhi", "website": "https://www.seleqtionshotels.com/en-in/hotels/connaught-new-delhi" },
+  { "name": "Hotel Connaught Royale", "address": "Connaught Place, New Delhi", "website": "https://connaughtroyale.com/" },
+  { "name": "The Imperial New Delhi", "address": "Connaught Place, New Delhi", "website": "https://www.theimperialindia.com/" },
+  { "name": "Connaught Mews", "address": "Connaught Place, New Delhi", "website": "https://connaughtmews.com/" },
+  { "name": "The Metropolitan Hotel & Spa", "address": "Connaught Place, New Delhi", "website": "https://www.hotelmetdelhi.com/" }
+]

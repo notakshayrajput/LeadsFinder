@@ -1,20 +1,22 @@
 # LeadsFinder
 
-LeadsFinder has a working **map UI → API → PostgreSQL job → fetch worker → quarantine** path. Choose the Geofabrik/OpenStreetMap extract or the cloned Google Maps Scraper CLI, select a search center and radius, then inspect the raw lodging observations. Lead cleaning and AI decisions are not active yet.
+LeadsFinder has a working **map UI → API → PostgreSQL job → fetch worker → quarantine** path and a command-line enrichment pilot. Choose the Geofabrik/OpenStreetMap extract or the cloned Google Maps Scraper CLI, select a search center and radius, then inspect the raw lodging observations. The enrichment pilot can research those observations and store field-level evidence. Lead cleaning and business deduplication are still separate future work.
 
 ## Run locally
 
 Prerequisites: .NET 10 SDK, Node.js 20.19+ or 22.12+, npm, and Docker Desktop with its Linux engine running.
 
-From `src/LeadsFinder`:
+With Docker Desktop running, the API, worker, or enrichment pilot starts the bundled PostgreSQL/PostGIS database on `127.0.0.1:55432` when needed and applies pending migrations. This default database is for local development. Set `LEADSFINDER_DB` to use an existing database; configured databases are never started or migrated automatically.
+
+To start or migrate the bundled database manually, from `src/LeadsFinder`:
 
 ```powershell
 docker compose up -d db
-$env:LEADSFINDER_DB = 'Host=127.0.0.1;Port=5432;Database=leadsfinder;Username=leadsfinder;Password=devpassword'
+$env:LEADSFINDER_DB = 'Host=127.0.0.1;Port=55432;Database=leadsfinder;Username=leadsfinder;Password=devpassword'
 dotnet ef database update --project LeadsFinder.Data --startup-project LeadsFinder.Data
 ```
 
-The connection string is for the local database in `compose.yaml`. Set `LEADSFINDER_DB` in **each** PowerShell terminal used for the API or worker. Start them in separate terminals:
+The connection string is for the local database in `compose.yaml`. Leave `LEADSFINDER_DB` unset for automatic local startup, or set it in **each** PowerShell terminal when using a configured database. Start the API and worker in separate terminals:
 
 ```powershell
 dotnet run --project LeadsFinder.Api --launch-profile http
@@ -55,7 +57,7 @@ For circles up to 1 km requesting at most 20 rows, the CLI receives direct Googl
 
 The worker gives Google searches an area-based limit: up to 1 km gets 6 minutes; up to 5 km, 12 minutes; up to 15 km, 25 minutes; up to 30 km, 50 minutes; and up to 50 km, 90 minutes. Jobs that may expand to 50 km also get a 90-minute limit. The database lease includes a five-minute margin. The CLI runs four concurrent pages inside two browsers for each job. These limits cap search work; they do not guarantee a target row count. Google Maps search results may omit businesses or fields, and the worker records only observations returned by the scraper.
 
-Apply migrations explicitly after model changes. Neither the API nor worker changes the database schema on startup. `dotnet build LeadsFinder.slnx` and `npm run build` check the two applications.
+The default local Docker database is migrated at startup. Apply migrations explicitly for a configured database. `dotnet build LeadsFinder.slnx` and `npm run build` check the two applications.
 
 ## Search behavior
 
@@ -75,7 +77,22 @@ Apply migrations explicitly after model changes. Neither the API nor worker chan
 | `GET` | `/api/jobs?page=1&pageSize=20` | Page through jobs with quarantine counts. |
 | `GET` | `/api/jobs/{id}` | Inspect one job. |
 | `GET` | `/api/jobs/{id}/records?page=1&pageSize=20` | Page through its raw quarantine observations. |
+| `GET` | `/api/enriched-records?page=1&pageSize=20` | Page through persisted enrichment results. |
+| `GET` | `/api/enriched-records/{id}` | Inspect one result and its field evidence. |
 | `GET` | `/api/config` | Expose accepted form values and source mode. |
 | `GET` | `/api/locations?q=Baga%20Beach%2C%20Goa` | Search place names for map positioning. |
 
-Quarantine records are observations, not cleaned leads. Web search, AWS extraction, evidence comparisons, duplicate decisions, reviews, and corrections are separate future slices.
+Quarantine records are observations, not cleaned leads. Duplicate decisions, lead reviews, and corrections remain future slices.
+
+## Enrichment pilot
+
+`LeadsFinder.Enrichment` has a known-website strategy and an Ollama web-search strategy. It removes scripts, styles, and navigation from HTML, caps the text sent to a local Qwen model, and accepts extracted values only when the cited page contains the returned quote and value. Existing source values are retained. The `enriched_records` and `enrichment_evidence` tables keep one result per source observation and field-level provenance; they do not deduplicate businesses or mark model output as verified.
+
+Install Ollama and pull `qwen3:8b` (the available Qwen3 size closest to the requested 7B). Store the web-search key outside Git with:
+
+```powershell
+dotnet user-secrets set 'Ollama:ApiKey' '<your key>' --project LeadsFinder.EnrichmentPilot
+dotnet run --project LeadsFinder.EnrichmentPilot -- --limit 20 --context 'New Delhi'
+```
+
+Run these commands from `src/LeadsFinder`. `--context` supplies the search locality and requires matching pages to mention it near the heading or contact details; pass the locality of the selected source rows, especially when their raw address is empty. `LEADSFINDER_DB` overrides the default local Docker database. Set `Ollama__Model` and `Ollama__BaseUrl` to override the model or local API URL. The pilot skips source rows that already have an enrichment result and reports completed/partial rows, search requests, and model tokens. A partial row has missing fields; unsupported values remain null. Use `--retry-partial` to revisit partial rows while retaining their cited fields. Use `--sample` to run the separate, database-free 20-hotel sample in `samples/hotels-20.json`; its report is written under ignored `artifacts/` and is not inserted into the database. Ollama web search can return HTTP 429; the pilot records the error and keeps supported fields already found.

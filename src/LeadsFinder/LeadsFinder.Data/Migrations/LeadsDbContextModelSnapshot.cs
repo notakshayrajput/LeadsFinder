@@ -24,6 +24,114 @@ namespace LeadsFinder.Data.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "postgis");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("LeadsFinder.Data.EnrichedRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("PromptTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ResponseTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SearchCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Website")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceRecordId")
+                        .IsUnique();
+
+                    b.ToTable("enriched_records", (string)null);
+                });
+
+            modelBuilder.Entity("LeadsFinder.Data.EnrichmentEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CheckedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("EnrichedRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Excerpt")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("SourceUrl")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Strategy")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("VerificationStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnrichedRecordId", "Field");
+
+                    b.ToTable("enrichment_evidence", (string)null);
+                });
+
             modelBuilder.Entity("LeadsFinder.Data.SearchJobEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -166,6 +274,33 @@ namespace LeadsFinder.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("source_records", (string)null);
+                });
+
+            modelBuilder.Entity("LeadsFinder.Data.EnrichedRecord", b =>
+                {
+                    b.HasOne("LeadsFinder.Data.SourceRecord", "SourceRecord")
+                        .WithMany()
+                        .HasForeignKey("SourceRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SourceRecord");
+                });
+
+            modelBuilder.Entity("LeadsFinder.Data.EnrichmentEvidence", b =>
+                {
+                    b.HasOne("LeadsFinder.Data.EnrichedRecord", "EnrichedRecord")
+                        .WithMany("Evidence")
+                        .HasForeignKey("EnrichedRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("EnrichedRecord");
+                });
+
+            modelBuilder.Entity("LeadsFinder.Data.EnrichedRecord", b =>
+                {
+                    b.Navigation("Evidence");
                 });
 #pragma warning restore 612, 618
         }

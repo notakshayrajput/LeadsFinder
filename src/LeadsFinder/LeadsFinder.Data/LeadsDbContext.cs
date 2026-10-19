@@ -7,6 +7,8 @@ namespace LeadsFinder.Data
         public DbSet<SourceRecord> SourceRecords => Set<SourceRecord>();
 
         public DbSet<SearchJobEntity> SearchJobs => Set<SearchJobEntity>();
+        public DbSet<EnrichedRecord> EnrichedRecords => Set<EnrichedRecord>();
+        public DbSet<EnrichmentEvidence> EnrichmentEvidence => Set<EnrichmentEvidence>();
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.HasPostgresExtension("postgis");
@@ -42,6 +44,36 @@ namespace LeadsFinder.Data
                 entity.Property(x => x.ShortagePolicy).HasMaxLength(30).IsRequired();
                 entity.HasIndex(x => new { x.Status, x.ScheduledAtUtc });
                 entity.Property(x => x.LastError).HasMaxLength(1000);
+            });
+
+            modelBuilder.Entity<EnrichedRecord>(entity =>
+            {
+                entity.ToTable("enriched_records");
+                entity.HasKey(x => x.Id);
+                entity.HasIndex(x => x.SourceRecordId).IsUnique();
+                entity.HasOne(x => x.SourceRecord).WithMany().HasForeignKey(x => x.SourceRecordId);
+                entity.Property(x => x.Name).HasMaxLength(300).IsRequired();
+                entity.Property(x => x.Address).HasMaxLength(1000);
+                entity.Property(x => x.Phone).HasMaxLength(200);
+                entity.Property(x => x.Email).HasMaxLength(320);
+                entity.Property(x => x.Website).HasMaxLength(1000);
+                entity.Property(x => x.Status).HasMaxLength(30).IsRequired();
+                entity.Property(x => x.LastError).HasMaxLength(500);
+            });
+
+            modelBuilder.Entity<EnrichmentEvidence>(entity =>
+            {
+                entity.ToTable("enrichment_evidence");
+                entity.HasKey(x => x.Id);
+                entity.HasIndex(x => new { x.EnrichedRecordId, x.Field });
+                entity.HasOne(x => x.EnrichedRecord).WithMany(x => x.Evidence)
+                    .HasForeignKey(x => x.EnrichedRecordId).OnDelete(DeleteBehavior.Cascade);
+                entity.Property(x => x.Field).HasMaxLength(40).IsRequired();
+                entity.Property(x => x.Value).HasMaxLength(1000).IsRequired();
+                entity.Property(x => x.SourceUrl).HasMaxLength(1000).IsRequired();
+                entity.Property(x => x.Excerpt).HasMaxLength(500).IsRequired();
+                entity.Property(x => x.Strategy).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.VerificationStatus).HasMaxLength(30).IsRequired();
             });
         }
     }

@@ -5,8 +5,7 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var connectionString = builder.Configuration["LEADSFINDER_DB"]
-    ?? throw new InvalidOperationException("Set LEADSFINDER_DB.");
+var connectionString = await LocalDatabase.ResolveAndInitializeAsync(builder.Configuration["LEADSFINDER_DB"]);
 
 builder.Services.AddDbContext<LeadsDbContext>(options =>
     options.UseNpgsql(connectionString, npgsql => npgsql.UseNetTopologySuite()));
@@ -112,6 +111,34 @@ api.MapGet("/jobs/{id:guid}/records", async (Guid id, LeadsDbContext db, int? pa
         x.Name, x.Address, x.Location.Y, x.Location.X,
         x.Phone, x.Email, x.Website, x.FetchedAtUtc, x.RawJson)).ToArray();
     return Results.Ok(new PageResponse<SourceRecordResponse>(items, total, currentPage, size));
+});
+
+api.MapGet("/enriched-records", async (LeadsDbContext db, int? page, int? pageSize, CancellationToken cancellationToken) =>
+{
+    var currentPage = Math.Clamp(page ?? 1, 1, 10_000);
+    var size = Math.Clamp(pageSize ?? 20, 1, 100);
+    var total = await db.EnrichedRecords.CountAsync(cancellationToken);
+    var records = await db.EnrichedRecords.AsNoTracking()
+        .OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.Id)
+        .Skip((currentPage - 1) * size).Take(size)
+        .Select(x => new { x.Id, x.SourceRecordId, x.Name, x.Address, x.Phone, x.Email,
+            x.Website, x.Status, x.SearchCount, x.PromptTokens, x.ResponseTokens, x.UpdatedAtUtc })
+        .ToListAsync(cancellationToken);
+    return Results.Ok(new PageResponse<object>(records.Cast<object>().ToArray(), total, currentPage, size));
+});
+
+api.MapGet("/enriched-records/{id:guid}", async (Guid id, LeadsDbContext db, CancellationToken cancellationToken) =>
+{
+    var record = await db.EnrichedRecords.AsNoTracking().Include(x => x.Evidence)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    return record is null ? Results.NotFound() : Results.Ok(new
+    {
+        record.Id, record.SourceRecordId, record.Name, record.Address, record.Phone, record.Email,
+        record.Website, record.Status, record.SearchCount, record.PromptTokens,
+        record.ResponseTokens, record.LastError, record.UpdatedAtUtc,
+        Evidence = record.Evidence.Select(x => new { x.Field, x.Value, x.SourceUrl,
+            x.Excerpt, x.Strategy, x.VerificationStatus, x.CheckedAtUtc })
+    });
 });
 
 app.Run();

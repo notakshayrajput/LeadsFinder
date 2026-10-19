@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: leadsfinder
       POSTGRES_PASSWORD: devpassword
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - leadsfinder_data:/var/lib/postgresql/data
 
