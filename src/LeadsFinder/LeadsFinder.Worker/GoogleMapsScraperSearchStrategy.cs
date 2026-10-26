@@ -116,6 +116,7 @@ public sealed class GoogleMapsScraperSearchStrategy(
                 start.ArgumentList.Add(arg);
 
             using var process = new Process { StartInfo = start };
+            string[] resultLines;
             try
             {
                 process.Start();
@@ -127,8 +128,18 @@ public sealed class GoogleMapsScraperSearchStrategy(
                 if (process.ExitCode != 0)
                     throw new GoogleMapsScraperSourceException(
                         $"Google Maps Scraper exited with code {process.ExitCode}: {Tail(errors, 500)}");
-                logger.LogInformation("Google Maps Scraper job {JobId}: radius {Radius} m, {Mode}, {Output}",
-                    job.Id, radiusMeters, useGrid ? "grid" : "single URL", Tail(output, 200));
+                if (!File.Exists(results))
+                    throw new GoogleMapsScraperSourceException("Google Maps Scraper produced no results file.");
+                resultLines = await File.ReadAllLinesAsync(results, token);
+                var diagnostics = GoogleMapsScraperDiagnostics.Parse(output + "\n" + errors);
+                var rawCount = resultLines.Count(line => !string.IsNullOrWhiteSpace(line));
+                logger.LogInformation("Google Maps Scraper job {JobId}: radius {Radius} m, {Mode}, {RawCount} raw rows, {SuccessCount} successful requests, {FailedCount} failed requests",
+                    job.Id, radiusMeters, useGrid ? "grid" : "single URL", rawCount, diagnostics.SuccessfulJobs, diagnostics.FailedJobs);
+                if (diagnostics.FailureMessage(rawCount > 0) is { } failure)
+                    throw new GoogleMapsScraperSourceException(failure);
+                if (diagnostics.FailedJobs > 0)
+                    logger.LogWarning("Google Maps Scraper job {JobId} returned partial results; {FailedCount} requests failed",
+                        job.Id, diagnostics.FailedJobs);
             }
             catch (OperationCanceledException)
             {
@@ -145,10 +156,7 @@ public sealed class GoogleMapsScraperSearchStrategy(
                     "Could not start the Google Maps Scraper executable.", error);
             }
 
-            if (!File.Exists(results))
-                throw new GoogleMapsScraperSourceException("Google Maps Scraper produced no results file.");
-
-            foreach (var line in await File.ReadAllLinesAsync(results, token))
+            foreach (var line in resultLines)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 using var json = JsonDocument.Parse(line);

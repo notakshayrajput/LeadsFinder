@@ -3,6 +3,7 @@ using LeadsFinder.Worker;
 using Microsoft.EntityFrameworkCore;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Configuration.AddInMemoryCollection(LocalEnvironment.Read()).AddEnvironmentVariables().AddCommandLine(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Services.AddSingleton<ISearchStrategy, GeofabrikSearchStrategy>();

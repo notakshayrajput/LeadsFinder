@@ -7,8 +7,9 @@ using System.Text.Json;
 
 var config = Host.CreateApplicationBuilder(args).Configuration;
 config.AddUserSecrets(System.Reflection.Assembly.GetExecutingAssembly(), optional: true);
+config.AddInMemoryCollection(LocalEnvironment.Read()).AddEnvironmentVariables().AddCommandLine(args);
 var key = config["Ollama:ApiKey"] ?? config["OLLAMA_API_KEY"]
-    ?? throw new InvalidOperationException("Set Ollama:ApiKey with dotnet user-secrets for this pilot project.");
+    ?? throw new InvalidOperationException("Set Ollama__ApiKey in the repository-root .env file or configure Ollama:ApiKey with user-secrets.");
 var model = config["Ollama:Model"] ?? "qwen3:8b";
 var ollamaUrl = config["Ollama:BaseUrl"] ?? "http://127.0.0.1:11434";
 var limit = 20;

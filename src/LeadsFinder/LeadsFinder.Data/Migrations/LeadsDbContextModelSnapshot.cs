@@ -24,6 +24,34 @@ namespace LeadsFinder.Data.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "postgis");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("LeadsFinder.Data.DuplicateCheckRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReportJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("RuleVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("SearchJobId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SearchJobId", "CreatedAtUtc");
+
+                    b.ToTable("duplicate_check_runs", (string)null);
+                });
+
             modelBuilder.Entity("LeadsFinder.Data.EnrichedRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -274,6 +302,17 @@ namespace LeadsFinder.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("source_records", (string)null);
+                });
+
+            modelBuilder.Entity("LeadsFinder.Data.DuplicateCheckRun", b =>
+                {
+                    b.HasOne("LeadsFinder.Data.SearchJobEntity", "SearchJob")
+                        .WithMany()
+                        .HasForeignKey("SearchJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SearchJob");
                 });
 
             modelBuilder.Entity("LeadsFinder.Data.EnrichedRecord", b =>

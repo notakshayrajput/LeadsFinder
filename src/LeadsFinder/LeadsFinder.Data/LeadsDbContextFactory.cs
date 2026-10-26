@@ -9,7 +9,8 @@ namespace LeadsFinder.Data
         {
             var connectionString =
           Environment.GetEnvironmentVariable("LEADSFINDER_DB")
-          ?? throw new InvalidOperationException("Set LEADSFINDER_DB.");
+          ?? LocalEnvironment.Read().GetValueOrDefault("LEADSFINDER_DB")
+          ?? throw new InvalidOperationException("Set LEADSFINDER_DB in the environment or repository-root .env file.");
 
             var options = new DbContextOptionsBuilder<LeadsDbContext>()
                 .UseNpgsql(connectionString, x => x.UseNetTopologySuite())

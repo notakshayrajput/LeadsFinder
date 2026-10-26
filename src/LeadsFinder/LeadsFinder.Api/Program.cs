@@ -2,17 +2,53 @@ using LeadsFinder.Api;
 using LeadsFinder.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using LeadsFinder.Matching;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddInMemoryCollection(LocalEnvironment.Read()).AddEnvironmentVariables().AddCommandLine(args);
 
 var connectionString = await LocalDatabase.ResolveAndInitializeAsync(builder.Configuration["LEADSFINDER_DB"]);
 
 builder.Services.AddDbContext<LeadsDbContext>(options =>
     options.UseNpgsql(connectionString, npgsql => npgsql.UseNetTopologySuite()));
 builder.Services.AddSingleton<LocationSearchService>();
+var matchingOptions = new BedrockMatchingOptions();
+builder.Configuration.GetSection("DuplicateMatching:Bedrock").Bind(matchingOptions);
+if (string.IsNullOrWhiteSpace(matchingOptions.ApiKey))
+    matchingOptions.ApiKey = builder.Configuration["AWS_BEARER_TOKEN_BEDROCK"] ?? "";
+builder.Services.AddSingleton(matchingOptions);
+builder.Services.AddHttpClient<BedrockDuplicateJudge>(http =>
+    http.MaxResponseContentBufferSize = 1_048_576);
+builder.Services.AddScoped<DuplicateCheckService>();
 
 var app = builder.Build();
 var api = app.MapGroup("/api");
+
+api.MapGet("/duplicate-matching/config", (BedrockDuplicateJudge judge, BedrockMatchingOptions options) => Results.Ok(new
+{
+    ruleVersion = PlaceMatcher.RuleVersion, candidateRadiusMeters = 100, closeMatchMeters = 40,
+    bedrockReady = judge.Ready, maxAiCallsPerCheck = Math.Clamp(options.MaxCallsPerCheck, 1, 10)
+}));
+
+api.MapGet("/jobs/{id:guid}/duplicate-checks/latest", async (Guid id, LeadsDbContext db, CancellationToken token) =>
+{
+    if (!await db.SearchJobs.AnyAsync(x => x.Id == id, token)) return Results.NotFound();
+    var run = await db.DuplicateCheckRuns.AsNoTracking().Where(x => x.SearchJobId == id)
+        .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id).FirstOrDefaultAsync(token);
+    return Results.Ok(new { report = run is null ? null : JsonSerializer.Deserialize<DuplicateReport>(run.ReportJson, DuplicateCheckService.Json) });
+});
+
+api.MapPost("/jobs/{id:guid}/duplicate-checks", async (Guid id, DuplicateCheckRequest request,
+    LeadsDbContext db, DuplicateCheckService service, BedrockDuplicateJudge judge, CancellationToken token) =>
+{
+    var job = await db.SearchJobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, token);
+    if (job is null) return Results.NotFound();
+    if (job.Status is "pending" or "running")
+        return Results.Conflict(new { error = "Wait for fetching to finish before checking duplicates." });
+    if (request.UseAi && !judge.Ready)
+        return Results.BadRequest(new { error = "Configure Bedrock region, model, and a local API key before requesting AI comparison." });
+    return Results.Ok(await service.CheckAsync(id, request.UseAi, token));
+});
 
 api.MapGet("/config", () => Results.Ok(new
 {

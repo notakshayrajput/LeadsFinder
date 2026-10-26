@@ -1,5 +1,21 @@
 # LeadsFinder handoff — 9 October 2026
 
+## 19 October update
+
+The remainder of this file is a historical snapshot. The project is now a Git repository, and committed code includes Google Maps Scraper integration and a command-line enrichment pilot. The README describes current startup behavior, including automatic migrations for the bundled local development database. Google Places API remains unregistered.
+
+The current working tree adds manually triggered duplicate checking against source observations, a PostGIS candidate search, explainable name/address/distance rules, immutable reports, and a dashboard comparison panel. An optional Amazon Bedrock Converse adapter uses a locally stored short-term API key and is disabled by default. It sends bounded pairs only when explicitly requested. No automatic merge, final lead table, admin decision flow, or correction flow has been added. See `DUPLICATE_MATCHING.md` for AWS configuration and limitations. Existing enrichment rows supply missing values for comparisons.
+
+Local configuration now lives in the Git-ignored repository-root `.env`, with a tracked `.env.example` template. API, worker, enrichment pilot, and EF design-time tooling load it. Nonblank file values override appsettings/user-secrets; OS variables and CLI arguments take precedence. Existing user-secrets still work. Do not print or commit actual `.env` contents after the user adds keys. Restart .NET services after edits. Bedrock is still disabled pending the user's model and key configuration.
+
+On this PC, the existing local database had one completed job, 20 source observations, and 20 enrichment results at initial inspection; the user has since run additional searches. The OSM extract is present. Docker Desktop and the application were started in this chat. Dashboard tooling uses the bundled Node runtime because system Node 18 is too old. The Google scraper submodule is now initialized, and the CLI and Chromium are installed. Windows Chromium crashed with the pinned dependency's single-process/no-zygote flags; use `scripts/Setup-GoogleMapsScraper.ps1` to reproduce the compatibility build without editing the submodule or shared Go module cache. The worker now checks structured CLI failures even on exit code zero and logs raw-row and request counts. Recheck process/data state before assuming these remain current.
+
+Verified Google job `a5861549-ad52-4507-8939-25fe95e5722f` completed for Hotels within 1 km of the user's latest center (28.678194, 77.322129), saving four observations: all had addresses, two had phones and websites. Earlier missing-executable and pre-fix empty test jobs were retained as historical rows. The final solution build passed with zero warnings/errors, and 36 tests passed, including temporary-table PostGIS tests and scraper failure diagnostics. No Bedrock requests were made during scraper troubleshooting.
+
+Search jobs now open dedicated dashboard pages at `/jobs/{id}`, including immediately after creation. The page shows status, settings/timings, saved observation rows with pagination and raw JSON, and the worker's recorded failure reason. Active jobs poll every five seconds; rows are committed by the worker at completion. Duplicate checks now live on this page. A back link returns to `/#jobs`. Vite supports direct navigation; a production static host needs an `index.html` fallback for `/jobs/*`. Dashboard build passed, and browser checks covered completed/failed/missing jobs, direct refresh, and back navigation.
+
+Saved rows now use `rapid-grid-react@0.1.0` and its `rapid-grid` dependency. `SavedRowsGrid.tsx` renders read-only cells with stable columns, fixed row heights, and a separate raw JSON inspector; no React roots are mounted in recycled cells. API record pages request 100 rows. Browser verification with a 20-row job confirmed only seven rows mounted at a time and recycling on scroll through row 20. Dashboard build passed.
+
 This file is context for a new chat. Inspect the code and current database before acting: the user may have run more searches since this snapshot. `MVP_REQUIREMENTS.md` describes the intended product, but its implementation-status sections are old. A new request from the user takes precedence over suggestions in either document.
 
 ## What works now

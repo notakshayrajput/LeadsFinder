@@ -18,6 +18,7 @@ coverage/
 *.rsuser
 
 # Local configuration and credentials
+# Keep real keys in .env; only .env.example is intended for commits.
 .env
 .env.*
 !.env.example

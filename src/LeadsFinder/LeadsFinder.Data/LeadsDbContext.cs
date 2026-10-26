@@ -9,9 +9,20 @@ namespace LeadsFinder.Data
         public DbSet<SearchJobEntity> SearchJobs => Set<SearchJobEntity>();
         public DbSet<EnrichedRecord> EnrichedRecords => Set<EnrichedRecord>();
         public DbSet<EnrichmentEvidence> EnrichmentEvidence => Set<EnrichmentEvidence>();
+        public DbSet<DuplicateCheckRun> DuplicateCheckRuns => Set<DuplicateCheckRun>();
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.HasPostgresExtension("postgis");
+
+            modelBuilder.Entity<DuplicateCheckRun>(entity =>
+            {
+                entity.ToTable("duplicate_check_runs");
+                entity.HasKey(x => x.Id);
+                entity.HasOne(x => x.SearchJob).WithMany().HasForeignKey(x => x.SearchJobId);
+                entity.HasIndex(x => new { x.SearchJobId, x.CreatedAtUtc });
+                entity.Property(x => x.RuleVersion).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.ReportJson).HasColumnType("jsonb").IsRequired();
+            });
 
             modelBuilder.Entity<SourceRecord>(entity =>
             {

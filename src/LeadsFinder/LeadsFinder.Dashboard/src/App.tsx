@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { api, type Job, type Page, type SourceRecord } from './api'
+import { api, type Job, type Page } from './api'
 import MapSelector from './MapSelector'
-
-const placeTypes: Record<string, string> = {
-  any_lodging: 'All lodging',
-  hotel: 'Hotels',
-  bed_and_breakfast: 'Bed & breakfasts',
-  guest_house: 'Guest houses',
-  vacation_rental: 'Vacation rentals',
-}
+import JobDetailsPage from './JobDetailsPage'
+import { formatDate, formatDistance, placeTypes, StatusPill } from './jobUi'
 
 function localDateTime(minutesFromNow: number) {
   const date = new Date(Date.now() + minutesFromNow * 60_000)
@@ -16,34 +10,12 @@ function localDateTime(minutesFromNow: number) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function formatDate(value: string | null) {
-  if (!value) return '—'
-  return new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function formatDistance(meters: number) {
-  return meters >= 1000 ? `${(meters / 1000).toLocaleString()} km` : `${meters} m`
-}
-
-function statusLabel(status: Job['status']) {
-  return status.charAt(0).toUpperCase() + status.slice(1)
-}
-
-function StatusPill({ status }: { status: Job['status'] }) {
-  return <span className={`status-pill status-${status}`}><span className="status-dot" />{statusLabel(status)}</span>
-}
-
-function App() {
+function Workspace() {
   const [jobs, setJobs] = useState<Page<Job> | null>(null)
   const [jobsPage, setJobsPage] = useState(1)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
-  const [records, setRecords] = useState<Page<SourceRecord> | null>(null)
-  const [recordsPage, setRecordsPage] = useState(1)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now')
   const [scheduledLocal, setScheduledLocal] = useState(localDateTime(10))
   const [placeType, setPlaceType] = useState('any_lodging')
@@ -73,29 +45,9 @@ function App() {
     return () => window.clearInterval(timer)
   }, [loadJobs])
 
-  useEffect(() => {
-    if (!selectedId) return
-    let active = true
-    const loadSelection = async () => {
-      try {
-        const [job, page] = await Promise.all([api.job(selectedId), api.records(selectedId, recordsPage)])
-        if (active) {
-          setSelectedJob(job)
-          setRecords(page)
-        }
-      } catch (error) {
-        if (active) setLoadError((error as Error).message)
-      }
-    }
-    void loadSelection()
-    const timer = window.setInterval(() => void loadSelection(), 5000)
-    return () => { active = false; window.clearInterval(timer) }
-  }, [selectedId, recordsPage])
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitError(null)
-    setNotice(null)
     if (!requirePhone && !requireEmail && !requireAddress) {
       setSubmitError('Choose at least one desired field.')
       return
@@ -120,14 +72,7 @@ function App() {
         shortagePolicy,
         scheduledAtUtc: scheduledDate.toISOString(),
       })
-      setSelectedId(job.id)
-      setSelectedJob(job)
-      setRecordsPage(1)
-      setJobsPage(1)
-      setNotice(source === 'google-maps-scraper'
-        ? 'Job queued. The worker will run Google Maps Scraper and save matching observations.'
-        : 'Job queued. The worker will search the cached Northern Zone extract and save matching OSM observations.')
-      await loadJobs()
+      window.location.assign(`/jobs/${job.id}`)
     } catch (error) {
       setSubmitError((error as Error).message)
     } finally {
@@ -147,7 +92,6 @@ function App() {
         <a className="nav-item active" href="#overview"><span className="nav-icon">▦</span> Overview</a>
         <a className="nav-item" href="#new-search"><span className="nav-icon">⌕</span> New search</a>
         <a className="nav-item" href="#jobs"><span className="nav-icon">≡</span> Search jobs</a>
-        <a className="nav-item" href="#quarantine"><span className="nav-icon">⬡</span> Quarantine</a>
         <div className="sidebar-bottom"><span className="demo-indicator" /> Search sources<small>OpenStreetMap · Google Maps Scraper</small></div>
       </aside>
 
@@ -159,7 +103,6 @@ function App() {
           <div className="demo-banner"><span className="banner-icon">ⓘ</span><div><strong>Search source</strong><p>OpenStreetMap searches the cached Geofabrik Northern Zone extract. Google Maps Scraper runs a separate CLI process per job and divides larger areas into grid cells. Both sources save raw observations in quarantine. © OpenStreetMap contributors for OSM data.</p></div></div>
 
           {loadError && <div className="alert error" role="alert">{loadError} <button type="button" onClick={() => void loadJobs()}>Retry</button></div>}
-          {notice && <div className="alert success" role="status">{notice}<button type="button" onClick={() => setNotice(null)} aria-label="Dismiss">×</button></div>}
 
           <section className="stats-grid" aria-label="Job summary">
             <div className="stat-card"><span className="stat-label">TOTAL SEARCHES</span><strong>{jobs?.total ?? '—'}</strong><span className="stat-foot">Jobs in this workspace</span></div>
@@ -190,25 +133,26 @@ function App() {
             </section>
 
             <section className="panel jobs-panel" id="jobs">
-              <div className="panel-heading"><div><span className="section-kicker">02 / MONITOR</span><h2>Search jobs</h2><p>Select a job to inspect its quarantine records.</p></div><button type="button" className="icon-button" onClick={() => void loadJobs()} title="Refresh jobs" aria-label="Refresh jobs">↻</button></div>
+              <div className="panel-heading"><div><span className="section-kicker">02 / MONITOR</span><h2>Search jobs</h2><p>Open a job to see its status, saved rows, and errors.</p></div><button type="button" className="icon-button" onClick={() => void loadJobs()} title="Refresh jobs" aria-label="Refresh jobs">↻</button></div>
               <div className="job-list">
                 {jobs?.items.length === 0 && <div className="empty-state"><span>⌕</span><strong>No searches yet</strong><p>Create a job to start the workflow.</p></div>}
                 {!jobs && !loadError && <div className="empty-state">Loading jobs…</div>}
-                {jobs?.items.map(job => <button type="button" key={job.id} className={`job-row ${selectedId === job.id ? 'selected' : ''}`} onClick={() => { setSelectedId(job.id); setRecordsPage(1); setSelectedJob(job); setRecords(null) }}><div className="job-row-top"><span className="job-type">{placeTypes[job.placeType] ?? job.placeType}</span><StatusPill status={job.status} /></div><div className="job-meta">{job.source === 'google-maps-scraper' ? 'Google Maps' : 'OpenStreetMap'} <span>·</span> {job.latitude.toFixed(4)}, {job.longitude.toFixed(4)} <span>·</span> {formatDistance(job.radiusMeters)}</div><div className="job-row-bottom"><span>{formatDate(job.createdAtUtc)}</span><span>{job.quarantinedCount} in quarantine <b>→</b></span></div></button>)}
+                {jobs?.items.map(job => <a key={job.id} className="job-row" href={`/jobs/${job.id}`}><div className="job-row-top"><span className="job-type">{placeTypes[job.placeType] ?? job.placeType}</span><StatusPill status={job.status} /></div><div className="job-meta">{job.source === 'google-maps-scraper' ? 'Google Maps' : 'OpenStreetMap'} <span>·</span> {job.latitude.toFixed(4)}, {job.longitude.toFixed(4)} <span>·</span> {formatDistance(job.radiusMeters)}</div><div className="job-row-bottom"><span>{formatDate(job.createdAtUtc)}</span><span>{job.quarantinedCount} in quarantine <b>→</b></span></div></a>)}
               </div>
               {jobs && jobs.total > jobs.pageSize && <div className="pagination"><button disabled={jobsPage === 1} onClick={() => setJobsPage(jobsPage - 1)}>← Previous</button><span>Page {jobsPage} of {Math.ceil(jobs.total / jobs.pageSize)}</span><button disabled={jobsPage * jobs.pageSize >= jobs.total} onClick={() => setJobsPage(jobsPage + 1)}>Next →</button></div>}
             </section>
           </div>
 
-          <section className="panel detail-panel" id="quarantine"><div className="panel-heading"><div><span className="section-kicker">03 / INSPECT</span><h2>Quarantine records</h2><p>Source observations stay here until a later cleaning pipeline processes them.</p></div>{selectedJob && <StatusPill status={selectedJob.status} />}</div>
-            {selectedJob?.status === 'completed' && selectedJob.quarantinedCount === 0 && <div className="records-empty">No unseen lodging observations were found in this area. Move the map or increase the radius to search farther.</div>}
-            {!selectedJob ? <div className="detail-empty"><span>⬡</span><strong>Select a search job</strong><p>Its status, settings, and saved observations will appear here.</p></div> : <><div className="detail-summary"><div><span>JOB ID</span><code>{selectedJob.id}</code></div><div><span>SCHEDULED</span><strong>{formatDate(selectedJob.scheduledAtUtc)}</strong></div><div><span>ATTEMPTS</span><strong>{selectedJob.attemptCount}</strong></div><div><span>OBSERVATIONS</span><strong>{selectedJob.quarantinedCount}</strong></div></div>{selectedJob.lastError && <div className="alert error">Worker error: {selectedJob.lastError}</div>}<div className="records-header"><h3>Saved observations</h3><span>{records?.total ?? selectedJob.quarantinedCount} records</span></div>{records?.items.length === 0 && selectedJob.status !== 'completed' && <div className="records-empty">No observations saved for this job yet.</div>}{!records && <div className="records-empty">Loading observations…</div>}{records?.items.map(record => <article className="record-row" key={record.id}><div className="record-icon">⌂</div><div className="record-body"><div className="record-top"><h4>{record.name}</h4><span>{record.strategy}</span></div><p>{record.address || 'Address unavailable from source'}</p><div className="record-meta"><span>{record.latitude.toFixed(4)}, {record.longitude.toFixed(4)}</span><span>·</span><span>{formatDate(record.fetchedAtUtc)}</span>{record.phone && <span>· {record.phone}</span>}{record.email && <span>· {record.email}</span>}</div><div className="record-links"><a href={record.sourceLink} target="_blank" rel="noopener noreferrer">Source link ↗</a>{record.website && <a href={record.website} target="_blank" rel="noopener noreferrer">Website ↗</a>}<details><summary>Raw observation</summary><pre>{record.rawJson}</pre></details></div></div></article>)}{records && records.total > records.pageSize && <div className="pagination"><button disabled={recordsPage === 1} onClick={() => setRecordsPage(recordsPage - 1)}>← Previous</button><span>Page {recordsPage} of {Math.ceil(records.total / records.pageSize)}</span><button disabled={recordsPage * records.pageSize >= records.total} onClick={() => setRecordsPage(recordsPage + 1)}>Next →</button></div>}</>}
-          </section>
-          <footer>LeadsFinder · Fetch and quarantine workspace <span>OSM data © OpenStreetMap contributors · Extract by Geofabrik · No AI cleaning</span></footer>
+          <footer>LeadsFinder · Discovery and comparison workspace <span>OSM data © OpenStreetMap contributors · Extract by Geofabrik</span></footer>
         </div>
       </main>
     </div>
   )
 }
 
-export default App
+export default function App() {
+  const match = /^\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(window.location.pathname)
+  if (match) return <JobDetailsPage jobId={match[1]} />
+  if (window.location.pathname !== '/') return <main className="job-page-content"><h1>Page not found</h1><a className="heading-action" href="/">Back to workspace</a></main>
+  return <Workspace />
+}

@@ -3,8 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>LeadsFinder.Api-local</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LeadsFinder.Data\LeadsFinder.Data.csproj" />
+    <ProjectReference Include="..\LeadsFinder.Matching\LeadsFinder.Matching.csproj" />
   </ItemGroup>
 </Project>

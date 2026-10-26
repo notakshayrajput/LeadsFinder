@@ -7,4 +7,6 @@
   <Project Path="LeadsFinder.Enrichment/LeadsFinder.Enrichment.csproj" />
   <Project Path="LeadsFinder.EnrichmentPilot/LeadsFinder.EnrichmentPilot.csproj" />
   <Project Path="LeadsFinder.Worker/LeadsFinder.Worker.csproj" />
+  <Project Path="LeadsFinder.Matching/LeadsFinder.Matching.csproj" />
+  <Project Path="LeadsFinder.Matching.Tests/LeadsFinder.Matching.Tests.csproj" />
 </Solution>
