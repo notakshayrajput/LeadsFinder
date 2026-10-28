@@ -4,7 +4,17 @@ LeadsFinder has a working **map UI → API → PostgreSQL job → fetch worker �
 
 ## Run locally
 
-Prerequisites: .NET 10 SDK, Node.js 20.19+ or 22.12+, npm, and Docker Desktop with its Linux engine running.
+Prerequisites: .NET 10 SDK, Node.js 20.19+ or 22.12+, npm, and Docker Desktop with its Linux engine available.
+
+On Windows, run everything from the repository root with one command:
+
+```powershell
+.\run.cmd
+```
+
+The launcher starts Docker Desktop if needed, starts the bundled PostGIS database, applies migrations, installs dashboard dependencies if missing, and opens separate PowerShell windows for the API, worker, and dashboard. Open `http://127.0.0.1:5173/` when Vite reports ready. Press Ctrl+C in each service window to stop it; the database can be stopped separately with `docker compose -f src/LeadsFinder/compose.yaml stop db`. The launcher uses the bundled local database even if `.env` points elsewhere. If ports 5088 or 5173 are already occupied, stop the existing app before running it again. To prepare only the database and dependencies, run `.\run.cmd -SetupOnly`.
+
+The manual commands below remain useful when you want to start services individually or use a configured database.
 
 ### Local keys and configuration
 
