@@ -36,3 +36,6 @@ appsettings.*.local.json
 **/data/*.osm.pbf
 **/data/*.download-*
 *.log
+
+# Persisted local application records, user accounts, and cookie encryption keys
+**/App_Data/

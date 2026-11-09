@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/App_Data
+**/artifacts
+**/*.log
+src/LeadsFinder/google-maps-scraper

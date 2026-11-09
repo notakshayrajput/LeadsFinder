@@ -1,180 +1,187 @@
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using LeadsFinder.Api;
-using LeadsFinder.Data;
-using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
-using LeadsFinder.Matching;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.AddInMemoryCollection(LocalEnvironment.Read()).AddEnvironmentVariables().AddCommandLine(args);
-
-var connectionString = await LocalDatabase.ResolveAndInitializeAsync(builder.Configuration["LEADSFINDER_DB"]);
-
-builder.Services.AddDbContext<LeadsDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsql => npgsql.UseNetTopologySuite()));
-builder.Services.AddSingleton<LocationSearchService>();
-var matchingOptions = new BedrockMatchingOptions();
-builder.Configuration.GetSection("DuplicateMatching:Bedrock").Bind(matchingOptions);
-if (string.IsNullOrWhiteSpace(matchingOptions.ApiKey))
-    matchingOptions.ApiKey = builder.Configuration["AWS_BEARER_TOKEN_BEDROCK"] ?? "";
-builder.Services.AddSingleton(matchingOptions);
-builder.Services.AddHttpClient<BedrockDuplicateJudge>(http =>
-    http.MaxResponseContentBufferSize = 1_048_576);
-builder.Services.AddScoped<DuplicateCheckService>();
+builder.Configuration.AddInMemoryCollection(LeadsFinder.Data.LocalEnvironment.Read());
+// Explicit host/CLI settings take precedence over the repository's local .env.
+builder.Configuration.AddEnvironmentVariables().AddCommandLine(args);
+var dataPath = Path.GetFullPath(builder.Configuration["Demo:DataPath"] ?? "App_Data", builder.Environment.ContentRootPath);
+Directory.CreateDirectory(dataPath);
+builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataPath, "keys")));
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
+{
+    options.Cookie.Name = "leadsfinder.session";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.ExpireTimeSpan = TimeSpan.FromDays(7);
+    options.SlidingExpiration = true;
+    options.Events.OnRedirectToLogin = context => { context.Response.StatusCode = 401; return Task.CompletedTask; };
+    options.Events.OnRedirectToAccessDenied = context => { context.Response.StatusCode = 403; return Task.CompletedTask; };
+});
+builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
+        { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+builder.Services.AddSingleton(new DemoCatalog(builder.Configuration.GetValue("Demo:CatalogSize", 1_000_000)));
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<DemoStore>(services => new DemoStore(dataPath, services.GetRequiredService<DemoCatalog>(),
+    builder.Configuration, services.GetRequiredService<TimeProvider>()));
+builder.Services.AddHostedService<DemoWorker>();
 
 var app = builder.Build();
-var api = app.MapGroup("/api");
-
-api.MapGet("/duplicate-matching/config", (BedrockDuplicateJudge judge, BedrockMatchingOptions options) => Results.Ok(new
+// The framework trusts forwarded headers only from loopback proxies by default.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
-    ruleVersion = PlaceMatcher.RuleVersion, candidateRadiusMeters = 100, closeMatchMeters = 40,
-    bedrockReady = judge.Ready, maxAiCallsPerCheck = Math.Clamp(options.MaxCallsPerCheck, 1, 10)
-}));
-
-api.MapGet("/jobs/{id:guid}/duplicate-checks/latest", async (Guid id, LeadsDbContext db, CancellationToken token) =>
-{
-    if (!await db.SearchJobs.AnyAsync(x => x.Id == id, token)) return Results.NotFound();
-    var run = await db.DuplicateCheckRuns.AsNoTracking().Where(x => x.SearchJobId == id)
-        .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id).FirstOrDefaultAsync(token);
-    return Results.Ok(new { report = run is null ? null : JsonSerializer.Deserialize<DuplicateReport>(run.ReportJson, DuplicateCheckService.Json) });
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
-
-api.MapPost("/jobs/{id:guid}/duplicate-checks", async (Guid id, DuplicateCheckRequest request,
-    LeadsDbContext db, DuplicateCheckService service, BedrockDuplicateJudge judge, CancellationToken token) =>
+app.Use(async (context, next) =>
 {
-    var job = await db.SearchJobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, token);
-    if (job is null) return Results.NotFound();
-    if (job.Status is "pending" or "running")
-        return Results.Conflict(new { error = "Wait for fetching to finish before checking duplicates." });
-    if (request.UseAi && !judge.Ready)
-        return Results.BadRequest(new { error = "Configure Bedrock region, model, and a local API key before requesting AI comparison." });
-    return Results.Ok(await service.CheckAsync(id, request.UseAi, token));
-});
-
-api.MapGet("/config", () => Results.Ok(new
-{
-    placeTypes = JobValidation.PlaceTypes,
-    shortagePolicies = JobValidation.ShortagePolicies,
-    sourceMode = "geofabrik-osm",
-    sources = new[] { "geofabrik-osm", "google-maps-scraper" }
-}));
-
-api.MapGet("/locations", async (string? q, LocationSearchService search,
-    CancellationToken cancellationToken) =>
-{
-    if (string.IsNullOrWhiteSpace(q) || q.Trim().Length is < 2 or > 120)
-        return Results.BadRequest(new { error = "Enter a place name between 2 and 120 characters." });
-
-    try
+    // Reject browser writes coming from another origin while permitting same-origin
+    // clients and non-browser deployment checks that do not send an Origin header.
+    if (context.Request.Path.StartsWithSegments("/api") && !HttpMethods.IsGet(context.Request.Method)
+        && !HttpMethods.IsHead(context.Request.Method) && !HttpMethods.IsOptions(context.Request.Method))
     {
-        return Results.Ok(await search.SearchAsync(q, cancellationToken));
+        var origin = context.Request.Headers.Origin.ToString();
+        var fetchSite = context.Request.Headers["Sec-Fetch-Site"].ToString();
+        var expectedOrigin = $"{context.Request.Scheme}://{context.Request.Host}";
+        if (fetchSite == "cross-site" || (origin.Length > 0 && !origin.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = "This request must originate from this application." });
+            return;
+        }
+        if ((HttpMethods.IsPost(context.Request.Method) || HttpMethods.IsPut(context.Request.Method))
+            && context.Request.ContentLength > 0 && !context.Request.HasJsonContentType())
+        {
+            context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+            await context.Response.WriteAsJsonAsync(new { error = "Send the request as application/json." });
+            return;
+        }
     }
-    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or JsonException)
+    try { await next(context); }
+    catch (DemoRequestException error)
     {
-        return Results.Problem("Place search is temporarily unavailable.", statusCode: 503);
+        context.Response.StatusCode = error.StatusCode;
+        await context.Response.WriteAsJsonAsync(new { error = error.Message, code = error.Code });
     }
 });
-
-api.MapPost("/jobs", async (CreateJobRequest request, LeadsDbContext db, CancellationToken cancellationToken) =>
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.UseAuthentication();
+app.Use(async (context, next) =>
 {
-    var errors = JobValidation.Validate(request, DateTimeOffset.UtcNow);
-    if (errors.Count > 0)
-        return Results.ValidationProblem(errors);
-
-    var job = new SearchJobEntity
+    var path = context.Request.Path;
+    var publicAuthentication = path.Equals("/api/auth/register", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase);
+    if (path.StartsWithSegments("/api") && !publicAuthentication && context.User.Identity?.IsAuthenticated == true)
     {
-        CreatedAtUtc = DateTime.UtcNow,
-        ScheduledAtUtc = request.ScheduledAtUtc.UtcDateTime,
-        Latitude = request.Latitude,
-        Longitude = request.Longitude,
-        RadiusMeters = request.RadiusMeters,
-        PlaceType = request.PlaceType!,
-        Source = request.Source ?? "geofabrik-osm",
-        RequirePhone = request.RequirePhone,
-        RequireEmail = request.RequireEmail,
-        RequireAddress = request.RequireAddress,
-        TargetCount = request.TargetCount,
-        ShortagePolicy = request.ShortagePolicy!
-    };
-
-    db.SearchJobs.Add(job);
-    await db.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/jobs/{job.Id}", JobResponse.From(job, 0));
+        var store = context.RequestServices.GetRequiredService<DemoStore>();
+        var userId = UserId(context.User);
+        // Check the live account before model binding, including requests that carry
+        // a cookie issued before an administrator blocked or changed the account.
+        store.User(userId);
+        if (path.StartsWithSegments("/api/admin")) store.RequireAdmin(userId);
+    }
+    await next(context);
 });
+app.UseAuthorization();
+app.UseRateLimiter();
 
-api.MapGet("/jobs", async (LeadsDbContext db, int? page, int? pageSize, CancellationToken cancellationToken) =>
+var auth = app.MapGroup("/api/auth");
+auth.MapPost("/register", async (DemoRegisterRequest request, DemoStore store, HttpContext context) =>
 {
-    var currentPage = Math.Clamp(page ?? 1, 1, 10_000);
-    var size = Math.Clamp(pageSize ?? 20, 1, 100);
-    var total = await db.SearchJobs.CountAsync(cancellationToken);
-    var jobs = await db.SearchJobs.AsNoTracking()
-        .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
-        .Skip((currentPage - 1) * size).Take(size)
-        .ToListAsync(cancellationToken);
-    var jobIds = jobs.Select(x => x.Id).ToArray();
-    var counts = await db.SourceRecords.AsNoTracking()
-        .Where(x => jobIds.Contains(x.SearchJobId))
-        .GroupBy(x => x.SearchJobId)
-        .Select(x => new { JobId = x.Key, Count = x.Count() })
-        .ToDictionaryAsync(x => x.JobId, x => x.Count, cancellationToken);
-    var items = jobs.Select(x => JobResponse.From(x, counts.GetValueOrDefault(x.Id))).ToArray();
-    return Results.Ok(new PageResponse<JobResponse>(items, total, currentPage, size));
-});
-
-api.MapGet("/jobs/{id:guid}", async (Guid id, LeadsDbContext db, CancellationToken cancellationToken) =>
+    var user = store.Register(request);
+    await SignIn(context, user);
+    return Results.Ok(user);
+}).RequireRateLimiting("auth");
+auth.MapPost("/login", async (DemoLoginRequest request, DemoStore store, HttpContext context) =>
 {
-    var job = await db.SearchJobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-    if (job is null)
-        return Results.NotFound();
-
-    var count = await db.SourceRecords.CountAsync(x => x.SearchJobId == id, cancellationToken);
-    return Results.Ok(JobResponse.From(job, count));
-});
-
-api.MapGet("/jobs/{id:guid}/records", async (Guid id, LeadsDbContext db, int? page, int? pageSize, CancellationToken cancellationToken) =>
+    var user = store.Login(request);
+    await SignIn(context, user);
+    return Results.Ok(user);
+}).RequireRateLimiting("auth");
+auth.MapPost("/logout", async (HttpContext context) =>
 {
-    if (!await db.SearchJobs.AnyAsync(x => x.Id == id, cancellationToken))
-        return Results.NotFound();
-
-    var currentPage = Math.Clamp(page ?? 1, 1, 10_000);
-    var size = Math.Clamp(pageSize ?? 20, 1, 100);
-    var query = db.SourceRecords.AsNoTracking().Where(x => x.SearchJobId == id);
-    var total = await query.CountAsync(cancellationToken);
-    var records = await query.OrderBy(x => x.FetchedAtUtc).ThenBy(x => x.Id)
-        .Skip((currentPage - 1) * size).Take(size)
-        .ToListAsync(cancellationToken);
-    var items = records.Select(x => new SourceRecordResponse(
-        x.Id, x.SearchJobId, x.Strategy, x.SourceId, x.SourceLink,
-        x.Name, x.Address, x.Location.Y, x.Location.X,
-        x.Phone, x.Email, x.Website, x.FetchedAtUtc, x.RawJson)).ToArray();
-    return Results.Ok(new PageResponse<SourceRecordResponse>(items, total, currentPage, size));
+    await context.SignOutAsync();
+    return Results.Ok(new { });
 });
+auth.MapGet("/me", (ClaimsPrincipal user, DemoStore store) => Results.Ok(store.User(UserId(user)))).RequireAuthorization();
 
-api.MapGet("/enriched-records", async (LeadsDbContext db, int? page, int? pageSize, CancellationToken cancellationToken) =>
+var api = app.MapGroup("/api").RequireAuthorization();
+api.MapGet("/config", (ClaimsPrincipal user, DemoStore store) => Results.Ok(new
 {
-    var currentPage = Math.Clamp(page ?? 1, 1, 10_000);
-    var size = Math.Clamp(pageSize ?? 20, 1, 100);
-    var total = await db.EnrichedRecords.CountAsync(cancellationToken);
-    var records = await db.EnrichedRecords.AsNoTracking()
-        .OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.Id)
-        .Skip((currentPage - 1) * size).Take(size)
-        .Select(x => new { x.Id, x.SourceRecordId, x.Name, x.Address, x.Phone, x.Email,
-            x.Website, x.Status, x.SearchCount, x.PromptTokens, x.ResponseTokens, x.UpdatedAtUtc })
-        .ToListAsync(cancellationToken);
-    return Results.Ok(new PageResponse<object>(records.Cast<object>().ToArray(), total, currentPage, size));
-});
-
-api.MapGet("/enriched-records/{id:guid}", async (Guid id, LeadsDbContext db, CancellationToken cancellationToken) =>
+    placeTypes = DemoCatalog.PlaceTypes, maxRowsPerJob = 200, catalogSize = store.Dashboard(UserId(user)).CatalogSize,
+    mapCenter = new { latitude = 28.6139, longitude = 77.2090 }
+}));
+api.MapGet("/locations", (string? q) => Results.Ok(DemoCatalog.Locations
+    .Where(x => string.IsNullOrWhiteSpace(q) || x.DisplayName.Contains(q.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray()));
+api.MapGet("/dashboard", (ClaimsPrincipal user, DemoStore store) => Results.Ok(store.Dashboard(UserId(user))));
+api.MapGet("/jobs", (ClaimsPrincipal user, DemoStore store, int? page, int? pageSize) =>
+    Results.Ok(store.Jobs(UserId(user), page, pageSize)));
+api.MapPost("/jobs", (DemoCreateJobRequest request, ClaimsPrincipal user, DemoStore store) =>
 {
-    var record = await db.EnrichedRecords.AsNoTracking().Include(x => x.Evidence)
-        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-    return record is null ? Results.NotFound() : Results.Ok(new
-    {
-        record.Id, record.SourceRecordId, record.Name, record.Address, record.Phone, record.Email,
-        record.Website, record.Status, record.SearchCount, record.PromptTokens,
-        record.ResponseTokens, record.LastError, record.UpdatedAtUtc,
-        Evidence = record.Evidence.Select(x => new { x.Field, x.Value, x.SourceUrl,
-            x.Excerpt, x.Strategy, x.VerificationStatus, x.CheckedAtUtc })
-    });
+    var job = store.CreateJob(UserId(user), request);
+    return Results.Created($"/api/jobs/{job.Id}", job);
+});
+api.MapGet("/jobs/{id:guid}", (Guid id, ClaimsPrincipal user, DemoStore store) => Results.Ok(store.Job(UserId(user), id)));
+api.MapPost("/jobs/{id:guid}/enrich", (Guid id, ClaimsPrincipal user, DemoStore store) =>
+    Results.Ok(store.Enrich(UserId(user), id)));
+api.MapGet("/records", (ClaimsPrincipal user, DemoStore store, string? status, Guid? jobId, string? q,
+    string? contact, bool? hasContact, int? page, int? pageSize, string? salesStage, string? dnd) =>
+    Results.Ok(store.Records(UserId(user), status, jobId, q, contact, hasContact ?? false, page, pageSize, salesStage, dnd)));
+api.MapPatch("/records/{id:guid}/sales", (Guid id, DemoUpdateSalesRequest request, ClaimsPrincipal user, DemoStore store) =>
+    Results.Ok(store.UpdateSales(UserId(user), id, request)));
+api.MapPut("/records/{id:guid}/quality", (Guid id, DemoReviewFieldRequest request, ClaimsPrincipal user, DemoStore store) =>
+    Results.Ok(store.ReviewField(UserId(user), id, request)));
+api.MapGet("/records/export", (ClaimsPrincipal user, DemoStore store, string? status, Guid? jobId, string? q,
+    string? contact, bool? hasContact, string? salesStage, string? dnd, bool? includeSamples) =>
+{
+    var csv = store.ExportSales(UserId(user), status, jobId, q, contact, hasContact ?? false, salesStage, dnd, includeSamples ?? false);
+    return Results.File(System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(csv)).ToArray(),
+        "text/csv; charset=utf-8", $"dynamics-sales-leads-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+});
+api.MapGet("/jobs/{id:guid}/records", (Guid id, ClaimsPrincipal user, DemoStore store, string? status, string? q,
+    string? contact, bool? hasContact, int? page, int? pageSize) =>
+    Results.Ok(store.Records(UserId(user), status, id, q, contact, hasContact ?? false, page, pageSize)));
+api.MapPost("/records", (DemoCreateRecordRequest request, ClaimsPrincipal user, DemoStore store) =>
+{
+    var row = store.CreateRecord(UserId(user), request);
+    return Results.Created($"/api/jobs/{row.JobId}/records", row);
 });
 
+var admin = api.MapGroup("/admin");
+admin.MapGet("/overview", (ClaimsPrincipal user, DemoStore store) => Results.Ok(store.AdminOverview(UserId(user))));
+admin.MapGet("/users", (ClaimsPrincipal user, DemoStore store, string? q, int? page, int? pageSize) =>
+    Results.Ok(store.AdminUsers(UserId(user), q, page, pageSize)));
+admin.MapPatch("/users/{id:guid}", (Guid id, DemoUpdateUserRequest request, ClaimsPrincipal user, DemoStore store) =>
+    Results.Ok(store.UpdateUser(UserId(user), id, request)));
+admin.MapGet("/catalog/batches", (ClaimsPrincipal user, DemoStore store) => Results.Ok(store.GenerationBatches(UserId(user))));
+admin.MapPost("/catalog/generate", (DemoGenerateRequest request, ClaimsPrincipal user, DemoStore store) =>
+{
+    var batch = store.GenerateRows(UserId(user), request);
+    return Results.Created("/api/admin/catalog/batches", batch);
+});
+
+// An unknown API path must not return the SPA's HTML shell.
+app.MapMethods("/api/{**path}", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], () => Results.NotFound());
+if (Directory.Exists(Path.Combine(app.Environment.ContentRootPath, "wwwroot")))
+    app.MapFallbackToFile("index.html");
 app.Run();
+
+static Guid UserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+static Task SignIn(HttpContext context, DemoUserResponse user) => context.SignInAsync(
+    CookieAuthenticationDefaults.AuthenticationScheme,
+    new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new Claim(ClaimTypes.Name, user.Name)], CookieAuthenticationDefaults.AuthenticationScheme)),
+    new AuthenticationProperties { IsPersistent = true });
